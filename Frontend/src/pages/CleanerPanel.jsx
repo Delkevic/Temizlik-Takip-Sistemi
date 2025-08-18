@@ -80,6 +80,18 @@ const CleanerPanel = () => {
 
   // Durum rengi belirle
   const getStatusColor = (toilet) => {
+    // Aktif temizlik görevi var mı kontrol et
+    if (toilet.cleaning_task) {
+      const task = toilet.cleaning_task;
+      if (task.status === 'completed') {
+        return '#28a745'; // Yeşil - temizlik tamamlandı
+      } else if (task.status === 'in_progress') {
+        return '#ffc107'; // Sarı - temizlik devam ediyor
+      } else if (task.status === 'assigned') {
+        return '#17a2b8'; // Mavi - görev alındı
+      }
+    }
+    
     if (!toilet.last_rating) return '#6c757d'; // Gri - hiç kontrol edilmemiş
     if (toilet.has_problems) return '#dc3545'; // Kırmızı - problem var
     return '#28a745'; // Yeşil - temiz
@@ -87,6 +99,18 @@ const CleanerPanel = () => {
 
   // Durum metni belirle
   const getStatusText = (toilet) => {
+    // Aktif temizlik görevi var mı kontrol et
+    if (toilet.cleaning_task) {
+      const task = toilet.cleaning_task;
+      if (task.status === 'completed') {
+        return 'Temizlik tamamlandı - Temiz';
+      } else if (task.status === 'in_progress') {
+        return 'Temizlik devam ediyor';
+      } else if (task.status === 'assigned') {
+        return 'Temizlik görevi alındı';
+      }
+    }
+    
     if (!toilet.last_rating) return 'Henüz kontrol edilmemiş';
     if (toilet.has_problems) return `${toilet.problem_count} problem tespit edildi`;
     return 'Temiz';
@@ -166,7 +190,7 @@ const CleanerPanel = () => {
       const data = await response.json();
       
       if (data.success) {
-        alert('Temizlik tamamlandı!');
+        alert('Temizlik başarıyla tamamlandı! Tuvalet şimdi temiz olarak işaretlendi.');
         fetchToiletsStatus(); // Durumları yenile
       } else {
         alert(data.message);

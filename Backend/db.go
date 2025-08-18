@@ -57,13 +57,13 @@ func InitDatabase() {
 	}
 
 	// Veritabanı tablolarını otomatik oluştur
-	err = DB.AutoMigrate(&User{}, &Rating{}, &Toilet{})
+	err = DB.AutoMigrate(&User{}, &Rating{}, &Toilet{}, &CleaningTask{})
 	if err != nil {
 		log.Fatal("Tablo oluşturma hatası: ", err)
 	}
 
-	// CleaningTask tablosunu manuel oluştur (charset sorunu için)
-	recreateCleaningTaskTable()
+	// CleaningTask tablosunu sadece yoksa oluştur (charset sorunu için)
+	createCleaningTaskTableIfNotExists()
 
 	// İlk tuvaletleri oluştur (sadece bir kez)
 	createInitialToilets()
@@ -103,47 +103,37 @@ func createInitialToilets() {
 	}
 }
 
-// recreateCleaningTaskTable CleaningTask tablosunu doğru charset ile yeniden oluşturur
-func recreateCleaningTaskTable() {
-	// Önce mevcut tabloyu kontrol et
+// createCleaningTaskTableIfNotExists CleaningTask tablosunu sadece yoksa oluşturur
+func createCleaningTaskTableIfNotExists() {
+	// Mevcut tabloyu kontrol et
 	var tableExists bool
 	DB.Raw("SELECT COUNT(*) > 0 FROM information_schema.tables WHERE table_schema = DATABASE() AND table_name = 'cleaning_tasks'").Scan(&tableExists)
 
-	if tableExists {
-		log.Println("Mevcut cleaning_tasks tablosu siliniyor...")
-		DB.Exec("DROP TABLE cleaning_tasks")
-	}
+	if !tableExists {
+		log.Println("CleaningTask tablosu bulunamadı, oluşturuluyor...")
 
-	// Tabloyu doğru charset ve collation ile oluştur
-	createTableSQL := `
-	CREATE TABLE cleaning_tasks (
-		id INT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
-		toilet_id INT NOT NULL,
-		cleaner_id INT UNSIGNED NOT NULL,
-		cleaner_name VARCHAR(255) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci NOT NULL,
-		status VARCHAR(50) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci DEFAULT 'assigned',
-		started_at TIMESTAMP NULL,
-		completed_at TIMESTAMP NULL,
-		created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-		updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
-		INDEX idx_toilet_status (toilet_id, status)
-	) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;`
+		// Tabloyu doğru charset ve collation ile oluştur
+		createTableSQL := `
+		CREATE TABLE cleaning_tasks (
+			id INT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+			toilet_id INT NOT NULL,
+			cleaner_id INT UNSIGNED NOT NULL,
+			cleaner_name VARCHAR(255) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci NOT NULL,
+			status VARCHAR(50) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci DEFAULT 'assigned',
+			started_at TIMESTAMP NULL,
+			completed_at TIMESTAMP NULL,
+			created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+			updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+			INDEX idx_toilet_status (toilet_id, status)
+		) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;`
 
-	result := DB.Exec(createTableSQL)
-	if result.Error != nil {
-		log.Printf("CleaningTask tablosu oluşturma hatası: %v", result.Error)
-	} else {
-		log.Println("CleaningTask tablosu başarıyla UTF8MB4 ile oluşturuldu!")
-
-		// Test verisi ekle
-		testSQL := "INSERT INTO cleaning_tasks (toilet_id, cleaner_id, cleaner_name, status) VALUES (999, 999, 'Test Görevlisi Örnekleme', 'test')"
-		testResult := DB.Exec(testSQL)
-		if testResult.Error != nil {
-			log.Printf("UTF8 test hatası: %v", testResult.Error)
+		result := DB.Exec(createTableSQL)
+		if result.Error != nil {
+			log.Printf("CleaningTask tablosu oluşturma hatası: %v", result.Error)
 		} else {
-			log.Println("UTF8 test başarılı - Türkçe karakterler destekleniyor!")
-			// Test verisini sil
-			DB.Exec("DELETE FROM cleaning_tasks WHERE toilet_id = 999")
+			log.Println("CleaningTask tablosu başarıyla UTF8MB4 ile oluşturuldu!")
 		}
+	} else {
+		log.Println("CleaningTask tablosu zaten mevcut, korunuyor...")
 	}
 }

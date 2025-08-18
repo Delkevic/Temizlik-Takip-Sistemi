@@ -68,12 +68,14 @@ type Toilet struct {
 
 // ToiletStatus tuvalet durumu için struct
 type ToiletStatus struct {
-	Toilet       Toilet        `json:"toilet"`
-	LastRating   *Rating       `json:"last_rating,omitempty"`
-	HasProblems  bool          `json:"has_problems"`
-	ProblemCount int           `json:"problem_count"`
-	LastChecked  *time.Time    `json:"last_checked,omitempty"`
-	CleaningTask *CleaningTask `json:"cleaning_task,omitempty"`
+	Toilet        Toilet        `json:"toilet"`
+	LastRating    *Rating       `json:"last_rating,omitempty"`
+	HasProblems   bool          `json:"has_problems"`
+	ProblemCount  int           `json:"problem_count"`
+	LastChecked   *time.Time    `json:"last_checked,omitempty"`
+	CleaningTask  *CleaningTask `json:"cleaning_task,omitempty"`
+	AverageRating float64       `json:"average_rating"`
+	TotalRatings  int           `json:"total_ratings"`
 }
 
 // CleaningTask temizlik görevi için model
@@ -99,6 +101,73 @@ type CleaningTaskResponse struct {
 	Success bool          `json:"success"`
 	Message string        `json:"message"`
 	Task    *CleaningTask `json:"task,omitempty"`
+}
+
+// CreateUserRequest yeni kullanıcı oluşturmak için struct
+type CreateUserRequest struct {
+	Username string `json:"username" binding:"required"`
+	Password string `json:"password" binding:"required"`
+	Name     string `json:"name" binding:"required"`
+	Role     string `json:"role"`
+}
+
+// UpdateUserRequest kullanıcı güncellemek için struct
+type UpdateUserRequest struct {
+	Username string `json:"username"`
+	Password string `json:"password"`
+	Name     string `json:"name"`
+	Role     string `json:"role"`
+	IsActive *bool  `json:"is_active"`
+}
+
+// UserResponse kullanıcı response için struct
+type UserResponse struct {
+	Success bool   `json:"success"`
+	Message string `json:"message"`
+	User    *User  `json:"user,omitempty"`
+}
+
+// UsersResponse çoklu kullanıcı response için struct
+type UsersResponse struct {
+	Success bool   `json:"success"`
+	Message string `json:"message"`
+	Users   []User `json:"users,omitempty"`
+}
+
+// CleanerStats temizlikçi istatistikleri için struct
+type CleanerStats struct {
+	CleanerID           uint    `json:"cleaner_id"`
+	CleanerName         string  `json:"cleaner_name"`
+	TotalCompletedTasks int64   `json:"total_completed_tasks"`
+	AverageCleaningTime float64 `json:"average_cleaning_time"` // dakika olarak
+	LastWeekTasks       int64   `json:"last_week_tasks"`
+	LastMonthTasks      int64   `json:"last_month_tasks"`
+	IsActive            bool    `json:"is_active"`
+	OngoingTasks        int64   `json:"ongoing_tasks"`
+	FastestCleaningTime float64 `json:"fastest_cleaning_time"` // dakika olarak
+	SlowestCleaningTime float64 `json:"slowest_cleaning_time"` // dakika olarak
+	TotalCleaningTime   float64 `json:"total_cleaning_time"`   // dakika olarak
+}
+
+// SystemStats sistem geneli istatistikleri için struct
+type SystemStats struct {
+	TotalToilets        int64   `json:"total_toilets"`
+	ActiveToilets       int64   `json:"active_toilets"`
+	ToiletsWithProblems int     `json:"toilets_with_problems"`
+	TotalCleaners       int64   `json:"total_cleaners"`
+	ActiveCleaners      int64   `json:"active_cleaners"`
+	TotalRatings        int64   `json:"total_ratings"`
+	AverageRating       float64 `json:"average_rating"`
+	CompletedTasksToday int64   `json:"completed_tasks_today"`
+	OngoingTasks        int64   `json:"ongoing_tasks"`
+}
+
+// StatsResponse istatistik yanıtı için struct
+type StatsResponse struct {
+	Success      bool           `json:"success"`
+	Message      string         `json:"message"`
+	SystemStats  *SystemStats   `json:"system_stats,omitempty"`
+	CleanerStats []CleanerStats `json:"cleaner_stats,omitempty"`
 }
 
 // Problem türlerini tanımlayan sabitler

@@ -2,6 +2,7 @@ package main
 
 import (
 	"crypto/sha256"
+	"database/sql"
 	"encoding/hex"
 	"encoding/json"
 	"net/http"
@@ -48,6 +49,15 @@ func SetupRoutes(router *gin.Engine) {
 		api.PUT("/cleaning/begin/:id", beginCleaningTask)
 		api.PUT("/cleaning/complete/:id", completeCleaningTask)
 		api.GET("/cleaning/tasks", getCleaningTasks)
+
+		// Admin routes - User management
+		api.GET("/admin/users", getUsers)
+		api.POST("/admin/users", createUser)
+		api.PUT("/admin/users/:id", updateUser)
+		api.DELETE("/admin/users/:id", deleteUser)
+
+		// Admin routes - Statistics
+		api.GET("/admin/stats", getAdminStats)
 	}
 }
 
@@ -264,6 +274,13 @@ func getToiletsStatus(c *gin.Context) {
 			hasLastRating = true
 		}
 
+		// Ortalama puanı hesapla
+		var avgRating struct {
+			Average float64
+			Count   int64
+		}
+		DB.Raw("SELECT AVG(rating) as average, COUNT(*) as count FROM ratings WHERE toilet_id = ?", toilet.ID).Scan(&avgRating)
+
 		// Problem sayısını hesapla
 		var problemCount int
 		hasProblems := false
@@ -288,10 +305,12 @@ func getToiletsStatus(c *gin.Context) {
 		}
 
 		status := ToiletStatus{
-			Toilet:       toilet,
-			HasProblems:  hasProblems,
-			ProblemCount: problemCount,
-			LastChecked:  lastChecked,
+			Toilet:        toilet,
+			HasProblems:   hasProblems,
+			ProblemCount:  problemCount,
+			LastChecked:   lastChecked,
+			AverageRating: avgRating.Average,
+			TotalRatings:  int(avgRating.Count),
 		}
 
 		if hasLastRating {
@@ -448,6 +467,14 @@ func completeCleaningTask(c *gin.Context) {
 		return
 	}
 
+	// Transaction ile işlemi gerçekleştir
+	tx := DB.Begin()
+	defer func() {
+		if r := recover(); r != nil {
+			tx.Rollback()
+		}
+	}()
+
 	// Görevin durumunu güncelle
 	now := time.Now()
 	task.Status = "completed"
@@ -457,10 +484,40 @@ func completeCleaningTask(c *gin.Context) {
 		task.StartedAt = &now
 	}
 
-	if err := DB.Save(&task).Error; err != nil {
+	if err := tx.Save(&task).Error; err != nil {
+		tx.Rollback()
 		c.JSON(http.StatusInternalServerError, CleaningTaskResponse{
 			Success: false,
 			Message: "Temizlik görevi güncellenirken hata oluştu: " + err.Error(),
+		})
+		return
+	}
+
+	// Temizlik tamamlandığında otomatik olarak temiz bir rating oluştur
+	// Böylece tuvalet "temiz" olarak gözükecek
+	cleanRating := Rating{
+		ToiletID:  task.ToiletID,
+		Rating:    5,    // Temizlik tamamlandığında maksimum puan ver
+		Problems:  "[]", // Boş problem listesi (JSON array)
+		OtherText: "",
+		CreatedAt: now,
+		UpdatedAt: now,
+	}
+
+	if err := tx.Create(&cleanRating).Error; err != nil {
+		tx.Rollback()
+		c.JSON(http.StatusInternalServerError, CleaningTaskResponse{
+			Success: false,
+			Message: "Temizlik sonrası değerlendirme oluşturulurken hata oluştu: " + err.Error(),
+		})
+		return
+	}
+
+	// Transaction'ı tamamla
+	if err := tx.Commit().Error; err != nil {
+		c.JSON(http.StatusInternalServerError, CleaningTaskResponse{
+			Success: false,
+			Message: "İşlem tamamlanırken hata oluştu: " + err.Error(),
 		})
 		return
 	}
@@ -499,5 +556,323 @@ func getCleaningTasks(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{
 		"success": true,
 		"data":    tasks,
+	})
+}
+
+// getUsers tüm kullanıcıları getirir (sadece admin erişimi)
+func getUsers(c *gin.Context) {
+	var users []User
+	if err := DB.Find(&users).Error; err != nil {
+		c.JSON(http.StatusInternalServerError, UsersResponse{
+			Success: false,
+			Message: "Kullanıcılar getirilirken hata oluştu: " + err.Error(),
+		})
+		return
+	}
+
+	c.JSON(http.StatusOK, UsersResponse{
+		Success: true,
+		Message: "Kullanıcılar başarıyla getirildi",
+		Users:   users,
+	})
+}
+
+// createUser yeni kullanıcı oluşturur (sadece admin erişimi)
+func createUser(c *gin.Context) {
+	var req CreateUserRequest
+
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, UserResponse{
+			Success: false,
+			Message: "Geçersiz veri formatı: " + err.Error(),
+		})
+		return
+	}
+
+	// Kullanıcı adı kontrolü
+	var existingUser User
+	if err := DB.Where("username = ?", req.Username).First(&existingUser).Error; err == nil {
+		c.JSON(http.StatusConflict, UserResponse{
+			Success: false,
+			Message: "Bu kullanıcı adı zaten kullanılıyor",
+		})
+		return
+	}
+
+	// Role varsayılan değeri
+	if req.Role == "" {
+		req.Role = "temizlikci"
+	}
+
+	// Şifreyi hashle
+	hashedPassword := hashPassword(req.Password)
+
+	// Yeni kullanıcı oluştur
+	user := User{
+		Username: req.Username,
+		Password: hashedPassword,
+		Name:     req.Name,
+		Role:     req.Role,
+		IsActive: true,
+	}
+
+	if err := DB.Create(&user).Error; err != nil {
+		c.JSON(http.StatusInternalServerError, UserResponse{
+			Success: false,
+			Message: "Kullanıcı oluşturulurken hata oluştu: " + err.Error(),
+		})
+		return
+	}
+
+	c.JSON(http.StatusCreated, UserResponse{
+		Success: true,
+		Message: "Kullanıcı başarıyla oluşturuldu",
+		User:    &user,
+	})
+}
+
+// updateUser kullanıcı bilgilerini günceller (sadece admin erişimi)
+func updateUser(c *gin.Context) {
+	idStr := c.Param("id")
+	userID, err := strconv.ParseUint(idStr, 10, 32)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, UserResponse{
+			Success: false,
+			Message: "Geçersiz kullanıcı ID formatı",
+		})
+		return
+	}
+
+	var req UpdateUserRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, UserResponse{
+			Success: false,
+			Message: "Geçersiz veri formatı: " + err.Error(),
+		})
+		return
+	}
+
+	var user User
+	if err := DB.First(&user, uint(userID)).Error; err != nil {
+		c.JSON(http.StatusNotFound, UserResponse{
+			Success: false,
+			Message: "Kullanıcı bulunamadı",
+		})
+		return
+	}
+
+	// Kullanıcı adı değişikliği kontrolü
+	if req.Username != "" && req.Username != user.Username {
+		var existingUser User
+		if err := DB.Where("username = ? AND id != ?", req.Username, userID).First(&existingUser).Error; err == nil {
+			c.JSON(http.StatusConflict, UserResponse{
+				Success: false,
+				Message: "Bu kullanıcı adı zaten kullanılıyor",
+			})
+			return
+		}
+		user.Username = req.Username
+	}
+
+	// Diğer alanları güncelle
+	if req.Name != "" {
+		user.Name = req.Name
+	}
+	if req.Role != "" {
+		user.Role = req.Role
+	}
+	if req.Password != "" {
+		user.Password = hashPassword(req.Password)
+	}
+	if req.IsActive != nil {
+		user.IsActive = *req.IsActive
+	}
+
+	if err := DB.Save(&user).Error; err != nil {
+		c.JSON(http.StatusInternalServerError, UserResponse{
+			Success: false,
+			Message: "Kullanıcı güncellenirken hata oluştu: " + err.Error(),
+		})
+		return
+	}
+
+	c.JSON(http.StatusOK, UserResponse{
+		Success: true,
+		Message: "Kullanıcı başarıyla güncellendi",
+		User:    &user,
+	})
+}
+
+// deleteUser kullanıcıyı siler (sadece admin erişimi)
+func deleteUser(c *gin.Context) {
+	idStr := c.Param("id")
+	userID, err := strconv.ParseUint(idStr, 10, 32)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, UserResponse{
+			Success: false,
+			Message: "Geçersiz kullanıcı ID formatı",
+		})
+		return
+	}
+
+	var user User
+	if err := DB.First(&user, uint(userID)).Error; err != nil {
+		c.JSON(http.StatusNotFound, UserResponse{
+			Success: false,
+			Message: "Kullanıcı bulunamadı",
+		})
+		return
+	}
+
+	// Kullanıcıyı sil
+	if err := DB.Delete(&user).Error; err != nil {
+		c.JSON(http.StatusInternalServerError, UserResponse{
+			Success: false,
+			Message: "Kullanıcı silinirken hata oluştu: " + err.Error(),
+		})
+		return
+	}
+
+	c.JSON(http.StatusOK, UserResponse{
+		Success: true,
+		Message: "Kullanıcı başarıyla silindi",
+	})
+}
+
+// getAdminStats admin paneli için istatistikleri getirir
+func getAdminStats(c *gin.Context) {
+	// Sistem geneli istatistikler
+	var systemStats SystemStats
+
+	// Toplam tuvalet sayısı
+	DB.Model(&Toilet{}).Count(&systemStats.TotalToilets)
+
+	// Aktif tuvalet sayısı
+	DB.Model(&Toilet{}).Where("is_active = ?", true).Count(&systemStats.ActiveToilets)
+
+	// Problem olan tuvalet sayısı (son 24 saat içinde problem bildirilen)
+	var problemToilets []int
+	DB.Model(&Rating{}).
+		Select("DISTINCT toilet_id").
+		Where("problems IS NOT NULL AND problems != '' AND problems != '[]' AND created_at > ?", time.Now().Add(-24*time.Hour)).
+		Pluck("toilet_id", &problemToilets)
+	systemStats.ToiletsWithProblems = len(problemToilets)
+
+	// Toplam temizlikçi sayısı
+	DB.Model(&User{}).Where("role = ?", "temizlikci").Count(&systemStats.TotalCleaners)
+
+	// Aktif temizlikçi sayısı
+	DB.Model(&User{}).Where("role = ? AND is_active = ?", "temizlikci", true).Count(&systemStats.ActiveCleaners)
+
+	// Toplam değerlendirme sayısı
+	DB.Model(&Rating{}).Count(&systemStats.TotalRatings)
+
+	// Ortalama puan
+	var avgRating sql.NullFloat64
+	DB.Model(&Rating{}).Select("AVG(rating)").Scan(&avgRating)
+	if avgRating.Valid {
+		systemStats.AverageRating = avgRating.Float64
+	}
+
+	// Bugün tamamlanan görev sayısı
+	today := time.Now().Truncate(24 * time.Hour)
+	DB.Model(&CleaningTask{}).
+		Where("status = ? AND completed_at >= ?", "completed", today).
+		Count(&systemStats.CompletedTasksToday)
+
+	// Devam eden görev sayısı
+	DB.Model(&CleaningTask{}).
+		Where("status IN (?)", []string{"assigned", "in_progress"}).
+		Count(&systemStats.OngoingTasks)
+
+	// Temizlikçi istatistikleri
+	var cleanerStats []CleanerStats
+
+	// Tüm temizlikçileri al
+	var cleaners []User
+	DB.Where("role = ?", "temizlikci").Find(&cleaners)
+
+	for _, cleaner := range cleaners {
+		var stats CleanerStats
+		stats.CleanerID = cleaner.ID
+		stats.CleanerName = cleaner.Name
+		stats.IsActive = cleaner.IsActive
+
+		// Tamamlanan görev sayısı
+		DB.Model(&CleaningTask{}).
+			Where("cleaner_id = ? AND status = ?", cleaner.ID, "completed").
+			Count(&stats.TotalCompletedTasks)
+
+		// Ortalama temizlik süresi (dakika)
+		var avgTime sql.NullFloat64
+		DB.Model(&CleaningTask{}).
+			Select("AVG(TIMESTAMPDIFF(MINUTE, started_at, completed_at))").
+			Where("cleaner_id = ? AND status = ? AND started_at IS NOT NULL AND completed_at IS NOT NULL", cleaner.ID, "completed").
+			Scan(&avgTime)
+		if avgTime.Valid {
+			stats.AverageCleaningTime = avgTime.Float64
+		} else {
+			stats.AverageCleaningTime = -1 // Hiç temizlik yapılmadığını belirtmek için
+		}
+
+		// En hızlı temizlik süresi
+		var fastestTime sql.NullFloat64
+		DB.Model(&CleaningTask{}).
+			Select("MIN(TIMESTAMPDIFF(MINUTE, started_at, completed_at))").
+			Where("cleaner_id = ? AND status = ? AND started_at IS NOT NULL AND completed_at IS NOT NULL", cleaner.ID, "completed").
+			Scan(&fastestTime)
+		if fastestTime.Valid {
+			stats.FastestCleaningTime = fastestTime.Float64
+		} else {
+			stats.FastestCleaningTime = -1 // Hiç temizlik yapılmadığını belirtmek için
+		}
+
+		// En yavaş temizlik süresi
+		var slowestTime sql.NullFloat64
+		DB.Model(&CleaningTask{}).
+			Select("MAX(TIMESTAMPDIFF(MINUTE, started_at, completed_at))").
+			Where("cleaner_id = ? AND status = ? AND started_at IS NOT NULL AND completed_at IS NOT NULL", cleaner.ID, "completed").
+			Scan(&slowestTime)
+		if slowestTime.Valid {
+			stats.SlowestCleaningTime = slowestTime.Float64
+		} else {
+			stats.SlowestCleaningTime = -1 // Hiç temizlik yapılmadığını belirtmek için
+		}
+
+		// Toplam temizlik süresi
+		var totalTime sql.NullFloat64
+		DB.Model(&CleaningTask{}).
+			Select("SUM(TIMESTAMPDIFF(MINUTE, started_at, completed_at))").
+			Where("cleaner_id = ? AND status = ? AND started_at IS NOT NULL AND completed_at IS NOT NULL", cleaner.ID, "completed").
+			Scan(&totalTime)
+		if totalTime.Valid {
+			stats.TotalCleaningTime = totalTime.Float64
+		}
+
+		// Son hafta görev sayısı
+		lastWeek := time.Now().Add(-7 * 24 * time.Hour)
+		DB.Model(&CleaningTask{}).
+			Where("cleaner_id = ? AND status = ? AND completed_at >= ?", cleaner.ID, "completed", lastWeek).
+			Count(&stats.LastWeekTasks)
+
+		// Son ay görev sayısı
+		lastMonth := time.Now().Add(-30 * 24 * time.Hour)
+		DB.Model(&CleaningTask{}).
+			Where("cleaner_id = ? AND status = ? AND completed_at >= ?", cleaner.ID, "completed", lastMonth).
+			Count(&stats.LastMonthTasks)
+
+		// Devam eden görev sayısı
+		DB.Model(&CleaningTask{}).
+			Where("cleaner_id = ? AND status IN (?)", cleaner.ID, []string{"assigned", "in_progress"}).
+			Count(&stats.OngoingTasks)
+
+		cleanerStats = append(cleanerStats, stats)
+	}
+
+	c.JSON(http.StatusOK, StatsResponse{
+		Success:      true,
+		Message:      "İstatistikler başarıyla getirildi",
+		SystemStats:  &systemStats,
+		CleanerStats: cleanerStats,
 	})
 }
