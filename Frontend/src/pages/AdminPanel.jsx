@@ -15,6 +15,11 @@ const AdminPanel = () => {
   const [activeTab, setActiveTab] = useState('toilets'); // toilets, users, stats
   const [stats, setStats] = useState(null);
   const [loadingStats, setLoadingStats] = useState(false);
+  const [selectedToilet, setSelectedToilet] = useState(null);
+  const [toiletRatings, setToiletRatings] = useState([]);
+  const [loadingRatings, setLoadingRatings] = useState(false);
+  const [ratingsPage, setRatingsPage] = useState(1);
+  const [ratingsPagination, setRatingsPagination] = useState(null);
   const [newUser, setNewUser] = useState({
     username: '',
     password: '',
@@ -184,6 +189,48 @@ const AdminPanel = () => {
     }
   };
 
+  const fetchToiletRatings = async (toiletId, page = 1) => {
+    setLoadingRatings(true);
+    try {
+      const response = await fetch(`http://localhost:8080/api/toilet/${toiletId}/ratings/paginated?page=${page}&limit=10`);
+      const data = await response.json();
+      if (data.success) {
+        setToiletRatings(data.data || []);
+        setRatingsPagination({
+          page: data.page,
+          totalPages: data.total_pages,
+          totalCount: data.total_count,
+          hasNext: data.has_next,
+          hasPrevious: data.has_previous
+        });
+      } else {
+        console.error('Tuvalet değerlendirmeleri getirilemedi:', data.message);
+      }
+    } catch (error) {
+      console.error('Tuvalet değerlendirmeleri getirilirken hata oluştu:', error);
+    } finally {
+      setLoadingRatings(false);
+    }
+  };
+
+  const handleToiletClick = (toilet) => {
+    setSelectedToilet(toilet);
+    setRatingsPage(1);
+    fetchToiletRatings(toilet.id, 1);
+  };
+
+  const handleRatingsPageChange = (newPage) => {
+    setRatingsPage(newPage);
+    fetchToiletRatings(selectedToilet.id, newPage);
+  };
+
+  const closeToiletRatings = () => {
+    setSelectedToilet(null);
+    setToiletRatings([]);
+    setRatingsPagination(null);
+    setRatingsPage(1);
+  };
+
   if (loading) {
     return <div className="loading">Yükleniyor...</div>;
   }
@@ -241,7 +288,11 @@ const AdminPanel = () => {
             ) : (
               <div className="toilet-status-grid">
                 {toiletStatuses.map(status => (
-                  <div key={status.toilet.id} className="toilet-status-card">
+                  <div 
+                    key={status.toilet.id} 
+                    className="toilet-status-card clickable"
+                    onClick={() => handleToiletClick(status.toilet)}
+                  >
                     <div className="toilet-info">
                       <h3>{status.toilet.name}</h3>
                       <p className="location">{status.toilet.location}</p>
@@ -590,6 +641,102 @@ const AdminPanel = () => {
                   </button>
                 </div>
               </form>
+            </div>
+          </div>
+        )}
+
+        {/* Tuvalet Değerlendirmeleri Modal */}
+        {selectedToilet && (
+          <div className="modal-overlay">
+            <div className="modal ratings-modal">
+              <div className="modal-header">
+                <h3>{selectedToilet.name} - Değerlendirmeler</h3>
+                <button 
+                  className="close-btn" 
+                  onClick={closeToiletRatings}
+                >
+                  ×
+                </button>
+              </div>
+              
+              <div className="modal-content">
+                {loadingRatings ? (
+                  <div className="loading">Değerlendirmeler yükleniyor...</div>
+                ) : toiletRatings.length > 0 ? (
+                  <>
+                    <div className="ratings-info">
+                      <p>Toplam {ratingsPagination?.totalCount || 0} değerlendirme</p>
+                    </div>
+                    
+                    <div className="ratings-list">
+                      {toiletRatings.map(rating => (
+                        <div key={rating.id} className="rating-item">
+                          <div className="rating-header">
+                            <div className="rating-score">
+                              <span className="label">Puan:</span>
+                              <span className={`score score-${rating.rating}`}>
+                                {rating.rating}/5
+                              </span>
+                            </div>
+                            <div className="rating-date">
+                              {new Date(rating.created_at).toLocaleString('tr-TR')}
+                            </div>
+                          </div>
+                          
+                          {rating.problem_texts && rating.problem_texts.length > 0 && (
+                            <div className="rating-problems">
+                              <span className="label">Sorunlar:</span>
+                              <div className="problems-list">
+                                {rating.problem_texts.map((problem, index) => (
+                                  <span key={index} className="problem-tag">
+                                    {problem}
+                                  </span>
+                                ))}
+                              </div>
+                            </div>
+                          )}
+                          
+                          {rating.other_text && (
+                            <div className="rating-comment">
+                              <span className="label">Yorum:</span>
+                              <p>{rating.other_text}</p>
+                            </div>
+                          )}
+                        </div>
+                      ))}
+                    </div>
+                    
+                    {/* Sayfalama */}
+                    {ratingsPagination && ratingsPagination.totalPages > 1 && (
+                      <div className="pagination">
+                        <button 
+                          className="btn-secondary"
+                          onClick={() => handleRatingsPageChange(ratingsPage - 1)}
+                          disabled={!ratingsPagination.hasPrevious}
+                        >
+                          ← Önceki
+                        </button>
+                        
+                        <span className="page-info">
+                          Sayfa {ratingsPagination.page} / {ratingsPagination.totalPages}
+                        </span>
+                        
+                        <button 
+                          className="btn-secondary"
+                          onClick={() => handleRatingsPageChange(ratingsPage + 1)}
+                          disabled={!ratingsPagination.hasNext}
+                        >
+                          Sonraki →
+                        </button>
+                      </div>
+                    )}
+                  </>
+                ) : (
+                  <div className="no-ratings">
+                    <p>Bu tuvalet için henüz değerlendirme yapılmamış.</p>
+                  </div>
+                )}
+              </div>
             </div>
           </div>
         )}

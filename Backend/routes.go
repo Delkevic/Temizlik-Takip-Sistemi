@@ -43,6 +43,7 @@ func SetupRoutes(router *gin.Engine) {
 		// Toilet routes
 		api.GET("/toilets", getToilets)
 		api.GET("/toilets/status", getToiletsStatus)
+		api.GET("/toilet/:toiletId/ratings/paginated", getToiletRatingsPaginated)
 
 		// Cleaning task routes
 		api.POST("/cleaning/start", startCleaningTask)
@@ -875,4 +876,93 @@ func getAdminStats(c *gin.Context) {
 		SystemStats:  &systemStats,
 		CleanerStats: cleanerStats,
 	})
+}
+
+// getToiletRatingsPaginated belirli bir tuvalete ait puanlamaları sayfalama ile getirir
+func getToiletRatingsPaginated(c *gin.Context) {
+	toiletIdStr := c.Param("toiletId")
+
+	toiletID, err := strconv.Atoi(toiletIdStr)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{
+			"success": false,
+			"message": "Geçersiz tuvalet ID formatı",
+		})
+		return
+	}
+
+	// Sayfa numarası ve sayfa boyutu parametreleri
+	pageStr := c.DefaultQuery("page", "1")
+	limitStr := c.DefaultQuery("limit", "10")
+
+	page, err := strconv.Atoi(pageStr)
+	if err != nil || page < 1 {
+		page = 1
+	}
+
+	limit, err := strconv.Atoi(limitStr)
+	if err != nil || limit < 1 || limit > 100 {
+		limit = 10
+	}
+
+	offset := (page - 1) * limit
+
+	var ratings []Rating
+	var totalCount int64
+
+	// Toplam sayıyı al
+	DB.Model(&Rating{}).Where("toilet_id = ?", toiletID).Count(&totalCount)
+
+	// Sayfalı veriyi al (en yeniden eskiye doğru)
+	if err := DB.Where("toilet_id = ?", toiletID).
+		Order("created_at DESC").
+		Limit(limit).
+		Offset(offset).
+		Find(&ratings).Error; err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"success": false,
+			"message": "Veriler getirilirken hata oluştu: " + err.Error(),
+		})
+		return
+	}
+
+	// Detayları doldur
+	var ratingDetails []RatingDetail
+	for _, rating := range ratings {
+		detail := RatingDetail{
+			Rating:    rating,
+			Problems:  []string{},
+			CreatedAt: rating.CreatedAt,
+		}
+
+		// Problems JSON string'ini parse et
+		var problemIDs []int
+		if err := json.Unmarshal([]byte(rating.Problems), &problemIDs); err == nil {
+			for _, problemID := range problemIDs {
+				if problemText, exists := ProblemTypes[problemID]; exists {
+					detail.Problems = append(detail.Problems, problemText)
+				}
+			}
+		}
+
+		ratingDetails = append(ratingDetails, detail)
+	}
+
+	// Toplam sayfa sayısını hesapla
+	totalPages := int((totalCount + int64(limit) - 1) / int64(limit))
+
+	response := PaginatedRatingsResponse{
+		Success:     true,
+		Message:     "Değerlendirmeler başarıyla getirildi",
+		Data:        ratingDetails,
+		ToiletID:    toiletID,
+		Page:        page,
+		Limit:       limit,
+		TotalCount:  int(totalCount),
+		TotalPages:  totalPages,
+		HasNext:     page < totalPages,
+		HasPrevious: page > 1,
+	}
+
+	c.JSON(http.StatusOK, response)
 }

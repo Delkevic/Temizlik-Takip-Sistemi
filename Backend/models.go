@@ -179,3 +179,24 @@ var ProblemTypes = map[int]string{
 	5: "Klozet kirli",
 	6: "Diğer",
 }
+
+// RatingDetail değerlendirme detayları için struct
+type RatingDetail struct {
+	Rating    `json:",inline"`
+	Problems  []string  `json:"problem_texts"`
+	CreatedAt time.Time `json:"created_at"`
+}
+
+// PaginatedRatingsResponse sayfalı değerlendirme yanıtı için struct
+type PaginatedRatingsResponse struct {
+	Success     bool           `json:"success"`
+	Message     string         `json:"message"`
+	Data        []RatingDetail `json:"data"`
+	ToiletID    int            `json:"toilet_id"`
+	Page        int            `json:"page"`
+	Limit       int            `json:"limit"`
+	TotalCount  int            `json:"total_count"`
+	TotalPages  int            `json:"total_pages"`
+	HasNext     bool           `json:"has_next"`
+	HasPrevious bool           `json:"has_previous"`
+}
