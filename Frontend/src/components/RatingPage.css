@@ -174,3 +174,58 @@
 .other-problem-textarea::placeholder {
   color: #9ca3af;
 }
+
+/* Tuvalet Seçimi Stilleri */
+.toilet-selection-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+  gap: 20px;
+  width: 100%;
+  margin-bottom: 30px;
+}
+
+.toilet-selection-button {
+  background: white;
+  border: 2px solid #e5e7eb;
+  border-radius: 12px;
+  padding: 25px;
+  cursor: pointer;
+  transition: all 0.3s ease;
+  text-align: center;
+}
+
+.toilet-selection-button:hover {
+  border-color: #388e3c;
+  box-shadow: 0 4px 15px rgba(56, 142, 60, 0.1);
+  transform: translateY(-2px);
+}
+
+.toilet-selection-button h3 {
+  color: #333;
+  font-size: 1.2rem;
+  margin: 0 0 10px 0;
+  font-weight: 600;
+}
+
+.toilet-selection-button p {
+  color: #666;
+  margin: 0;
+  font-size: 1rem;
+}
+
+.back-button {
+  background-color: #6b7280;
+  color: white;
+  border: none;
+  border-radius: 6px;
+  padding: 12px 24px;
+  font-size: 1rem;
+  font-weight: 500;
+  cursor: pointer;
+  transition: all 0.2s ease;
+}
+
+.back-button:hover {
+  background-color: #4b5563;
+  transform: translateY(-1px);
+}

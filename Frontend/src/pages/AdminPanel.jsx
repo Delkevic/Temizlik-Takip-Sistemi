@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import Header from '../components/Header';
-import './AdminPanel.css';
+import '../components/AdminPanel.css';
 
 const AdminPanel = () => {
   const [user, setUser] = useState(null);

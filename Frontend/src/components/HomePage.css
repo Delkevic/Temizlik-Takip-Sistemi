@@ -91,6 +91,36 @@
   box-shadow: 0 5px 15px rgba(102, 126, 234, 0.3);
 }
 
+/* Ana sayfa aksiyon butonları */
+.action-buttons {
+  margin-top: 30px;
+}
+
+.rating-button {
+  background: linear-gradient(135deg, #388e3c 0%, #2e7d32 100%);
+  color: white;
+  border: none;
+  padding: 15px 30px;
+  border-radius: 8px;
+  cursor: pointer;
+  font-size: 1.1rem;
+  font-weight: 600;
+  transition: all 0.3s ease;
+  margin-bottom: 20px;
+}
+
+.rating-button:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 8px 25px rgba(56, 142, 60, 0.3);
+  background: linear-gradient(135deg, #2e7d32 0%, #1b5e20 100%);
+}
+
+.login-text {
+  color: #888;
+  font-size: 0.95rem;
+  margin-top: 20px;
+}
+
 /* Responsive tasarım */
 @media (max-width: 768px) {
   .home-page {

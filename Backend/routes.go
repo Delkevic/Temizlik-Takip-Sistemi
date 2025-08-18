@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"strconv"
+	"time"
 
 	"github.com/gin-gonic/gin"
 )
@@ -16,7 +17,7 @@ func SetupRoutes(router *gin.Engine) {
 	router.Use(func(c *gin.Context) {
 		c.Header("Access-Control-Allow-Origin", "*")
 		c.Header("Access-Control-Allow-Methods", "POST, GET, OPTIONS, PUT, DELETE")
-		c.Header("Access-Control-Allow-Headers", "Accept, Content-Type, Content-Length, Accept-Encoding, X-CSRF-Token, Authorization")
+		c.Header("Access-Control-Allow-Headers", "Accept, Content-Type, Content-Length, Accept-Encoding, X-CSRF-Token, Authorization, X-User-ID, X-User-Name")
 
 		if c.Request.Method == "OPTIONS" {
 			c.AbortWithStatus(204)
@@ -37,6 +38,16 @@ func SetupRoutes(router *gin.Engine) {
 		api.GET("/ratings", getRatings)
 		api.GET("/rating/:id", getRating)
 		api.GET("/toilet/:toiletId/ratings", getToiletRatings)
+
+		// Toilet routes
+		api.GET("/toilets", getToilets)
+		api.GET("/toilets/status", getToiletsStatus)
+
+		// Cleaning task routes
+		api.POST("/cleaning/start", startCleaningTask)
+		api.PUT("/cleaning/begin/:id", beginCleaningTask)
+		api.PUT("/cleaning/complete/:id", completeCleaningTask)
+		api.GET("/cleaning/tasks", getCleaningTasks)
 	}
 }
 
@@ -208,5 +219,285 @@ func getToiletRatings(c *gin.Context) {
 		"data":      ratings,
 		"toilet_id": toiletID,
 		"count":     len(ratings),
+	})
+}
+
+// getToilets tüm aktif tuvaletleri getirir
+func getToilets(c *gin.Context) {
+	var toilets []Toilet
+
+	if err := DB.Where("is_active = ?", true).Find(&toilets).Error; err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"success": false,
+			"message": "Veriler getirilirken hata oluştu: " + err.Error(),
+		})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"success": true,
+		"data":    toilets,
+	})
+}
+
+// getToiletsStatus tüm tuvaletlerin durumunu getirir
+func getToiletsStatus(c *gin.Context) {
+	var toilets []Toilet
+
+	// Aktif tuvaletleri getir
+	if err := DB.Where("is_active = ?", true).Find(&toilets).Error; err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"success": false,
+			"message": "Tuvaletler getirilirken hata oluştu: " + err.Error(),
+		})
+		return
+	}
+
+	var toiletStatuses []ToiletStatus
+
+	for _, toilet := range toilets {
+		var lastRating Rating
+		var hasLastRating bool
+
+		// Son puanlamayı getir
+		if err := DB.Where("toilet_id = ?", toilet.ID).Order("created_at DESC").First(&lastRating).Error; err == nil {
+			hasLastRating = true
+		}
+
+		// Problem sayısını hesapla
+		var problemCount int
+		hasProblems := false
+		var lastChecked *time.Time
+
+		if hasLastRating {
+			lastChecked = &lastRating.CreatedAt
+
+			// Problems JSON string'ini parse et
+			var problems []int
+			if err := json.Unmarshal([]byte(lastRating.Problems), &problems); err == nil {
+				problemCount = len(problems)
+				hasProblems = problemCount > 0
+			}
+		}
+
+		// Aktif temizlik görevini kontrol et
+		var cleaningTask CleaningTask
+		hasActiveTask := false
+		if err := DB.Where("toilet_id = ? AND status IN ?", toilet.ID, []string{"assigned", "in_progress"}).First(&cleaningTask).Error; err == nil {
+			hasActiveTask = true
+		}
+
+		status := ToiletStatus{
+			Toilet:       toilet,
+			HasProblems:  hasProblems,
+			ProblemCount: problemCount,
+			LastChecked:  lastChecked,
+		}
+
+		if hasLastRating {
+			status.LastRating = &lastRating
+		}
+
+		if hasActiveTask {
+			status.CleaningTask = &cleaningTask
+		}
+
+		toiletStatuses = append(toiletStatuses, status)
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"success": true,
+		"data":    toiletStatuses,
+	})
+}
+
+// startCleaningTask temizlik görevini başlatır
+func startCleaningTask(c *gin.Context) {
+	var req CleaningTaskRequest
+
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, CleaningTaskResponse{
+			Success: false,
+			Message: "Geçersiz veri formatı: " + err.Error(),
+		})
+		return
+	}
+
+	// Bu tuvalet için aktif bir temizlik görevi var mı kontrol et
+	var existingTask CleaningTask
+	if err := DB.Where("toilet_id = ? AND status IN ?", req.ToiletID, []string{"assigned", "in_progress"}).First(&existingTask).Error; err == nil {
+		c.JSON(http.StatusConflict, CleaningTaskResponse{
+			Success: false,
+			Message: "Bu tuvalet için zaten aktif bir temizlik görevi var",
+		})
+		return
+	}
+
+	// Authorization header'ından kullanıcı bilgisini al
+	authHeader := c.GetHeader("Authorization")
+	if authHeader == "" {
+		c.JSON(http.StatusUnauthorized, CleaningTaskResponse{
+			Success: false,
+			Message: "Yetkilendirme başlığı eksik",
+		})
+		return
+	}
+
+	// Basit token doğrulama (gerçek uygulamada JWT kullanılmalı)
+	// Şimdilik header'dan user_id ve user_name alıyoruz
+	cleanerIDHeader := c.GetHeader("X-User-ID")
+	cleanerNameHeader := c.GetHeader("X-User-Name")
+
+	var cleanerID uint = 1
+	var cleanerName string = "Temizlik Görevlisi"
+
+	if cleanerIDHeader != "" {
+		if id, err := strconv.ParseUint(cleanerIDHeader, 10, 32); err == nil {
+			cleanerID = uint(id)
+		}
+	}
+
+	if cleanerNameHeader != "" {
+		cleanerName = cleanerNameHeader
+	}
+
+	// Yeni temizlik görevi oluştur
+	task := CleaningTask{
+		ToiletID:    req.ToiletID,
+		CleanerID:   cleanerID,
+		CleanerName: cleanerName,
+		Status:      "assigned",
+		StartedAt:   nil,
+		CompletedAt: nil,
+	}
+
+	if err := DB.Create(&task).Error; err != nil {
+		c.JSON(http.StatusInternalServerError, CleaningTaskResponse{
+			Success: false,
+			Message: "Temizlik görevi oluşturulurken hata oluştu: " + err.Error(),
+		})
+		return
+	}
+
+	c.JSON(http.StatusCreated, CleaningTaskResponse{
+		Success: true,
+		Message: "Temizlik görevi başarıyla oluşturuldu",
+		Task:    &task,
+	})
+}
+
+// beginCleaningTask temizlik görevini başlat durumuna getirir
+func beginCleaningTask(c *gin.Context) {
+	idStr := c.Param("id")
+	taskID, err := strconv.ParseUint(idStr, 10, 32)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, CleaningTaskResponse{
+			Success: false,
+			Message: "Geçersiz görev ID formatı",
+		})
+		return
+	}
+
+	var task CleaningTask
+	if err := DB.First(&task, uint(taskID)).Error; err != nil {
+		c.JSON(http.StatusNotFound, CleaningTaskResponse{
+			Success: false,
+			Message: "Temizlik görevi bulunamadı",
+		})
+		return
+	}
+
+	// Görevin durumunu güncelle
+	now := time.Now()
+	task.Status = "in_progress"
+	task.StartedAt = &now
+
+	if err := DB.Save(&task).Error; err != nil {
+		c.JSON(http.StatusInternalServerError, CleaningTaskResponse{
+			Success: false,
+			Message: "Temizlik görevi güncellenirken hata oluştu: " + err.Error(),
+		})
+		return
+	}
+
+	c.JSON(http.StatusOK, CleaningTaskResponse{
+		Success: true,
+		Message: "Temizlik görevi başlatıldı",
+		Task:    &task,
+	})
+}
+
+// completeCleaningTask temizlik görevini tamamlar
+func completeCleaningTask(c *gin.Context) {
+	idStr := c.Param("id")
+	taskID, err := strconv.ParseUint(idStr, 10, 32)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, CleaningTaskResponse{
+			Success: false,
+			Message: "Geçersiz görev ID formatı",
+		})
+		return
+	}
+
+	var task CleaningTask
+	if err := DB.First(&task, uint(taskID)).Error; err != nil {
+		c.JSON(http.StatusNotFound, CleaningTaskResponse{
+			Success: false,
+			Message: "Temizlik görevi bulunamadı",
+		})
+		return
+	}
+
+	// Görevin durumunu güncelle
+	now := time.Now()
+	task.Status = "completed"
+	task.CompletedAt = &now
+
+	if task.StartedAt == nil {
+		task.StartedAt = &now
+	}
+
+	if err := DB.Save(&task).Error; err != nil {
+		c.JSON(http.StatusInternalServerError, CleaningTaskResponse{
+			Success: false,
+			Message: "Temizlik görevi güncellenirken hata oluştu: " + err.Error(),
+		})
+		return
+	}
+
+	c.JSON(http.StatusOK, CleaningTaskResponse{
+		Success: true,
+		Message: "Temizlik görevi başarıyla tamamlandı",
+		Task:    &task,
+	})
+}
+
+// getCleaningTasks temizlik görevlerini getirir
+func getCleaningTasks(c *gin.Context) {
+	status := c.Query("status")
+	toiletID := c.Query("toilet_id")
+
+	query := DB.Model(&CleaningTask{})
+
+	if status != "" {
+		query = query.Where("status = ?", status)
+	}
+
+	if toiletID != "" {
+		query = query.Where("toilet_id = ?", toiletID)
+	}
+
+	var tasks []CleaningTask
+	if err := query.Order("created_at DESC").Find(&tasks).Error; err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"success": false,
+			"message": "Temizlik görevleri getirilirken hata oluştu: " + err.Error(),
+		})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"success": true,
+		"data":    tasks,
 	})
 }

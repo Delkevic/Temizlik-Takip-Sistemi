@@ -14,6 +14,7 @@ function App() {
         <Route path="/" element={<HomePage />} />
         <Route path="/admin" element={<AdminPanel />} />
         <Route path="/cleaner" element={<CleanerPanel />} />
+        <Route path="/rating" element={<RatingPage />} />
         <Route path="/rating/:toiletId" element={<RatingPage />} />
       </Routes>
     </Router>

@@ -1,14 +1,71 @@
-import React, { useState } from 'react';
-import { useParams, useNavigate } from 'react-router-dom';
+import React, { useState, useEffect } from 'react';
+import { useParams, useNavigate, useLocation } from 'react-router-dom';
 import '../components/RatingPage.css';
 
 const RatingPage = () => {
-  const { toiletId } = useParams();
+  const { toiletId: paramToiletId } = useParams();
+  const location = useLocation();
   const navigate = useNavigate();
+  const [toiletId, setToiletId] = useState(null);
+  const [toiletName, setToiletName] = useState('');
+  const [toilets, setToilets] = useState([]);
+  const [showToiletSelection, setShowToiletSelection] = useState(false);
   const [rating, setRating] = useState(0);
   const [hoveredRating, setHoveredRating] = useState(0);
   const [selectedProblems, setSelectedProblems] = useState([]);
   const [otherProblemText, setOtherProblemText] = useState('');
+
+  useEffect(() => {
+    // URL parametresinden veya query parametresinden toilet ID'sini al
+    const searchParams = new URLSearchParams(location.search);
+    const queryToiletId = searchParams.get('toilet');
+    
+    const finalToiletId = paramToiletId || queryToiletId;
+    
+    if (finalToiletId) {
+      setToiletId(finalToiletId);
+      fetchToiletInfo(finalToiletId);
+    } else {
+      // Tuvalet seçilmemişse, seçim ekranını göster
+      setShowToiletSelection(true);
+      fetchToilets();
+    }
+  }, [paramToiletId, location.search]);
+
+  const fetchToilets = async () => {
+    try {
+      const response = await fetch('http://localhost:8080/api/toilets');
+      const data = await response.json();
+      
+      if (data.success) {
+        setToilets(data.data);
+      }
+    } catch (error) {
+      console.error('Tuvaletler getirilemedi:', error);
+    }
+  };
+
+  const fetchToiletInfo = async (id) => {
+    try {
+      const response = await fetch('http://localhost:8080/api/toilets');
+      const data = await response.json();
+      
+      if (data.success) {
+        const toilet = data.data.find(t => t.id === parseInt(id));
+        if (toilet) {
+          setToiletName(toilet.name);
+        }
+      }
+    } catch (error) {
+      console.error('Tuvalet bilgisi getirilemedi:', error);
+    }
+  };
+
+  const selectToilet = (selectedToiletId, selectedToiletName) => {
+    setToiletId(selectedToiletId);
+    setToiletName(selectedToiletName);
+    setShowToiletSelection(false);
+  };
 
   const handleRatingClick = (value) => {
     setRating(value);
@@ -59,7 +116,7 @@ const RatingPage = () => {
           setRating(0);
           setSelectedProblems([]);
           setOtherProblemText('');
-          // Ana sayfaya yönlendir
+          // Temizlikçi paneline yönlendir
           navigate('/');
         } else {
           alert('Hata: ' + data.message);
@@ -73,10 +130,56 @@ const RatingPage = () => {
     }
   };
 
+  if (showToiletSelection) {
+    return (
+      <div className="rating-page">
+        <div className="rating-container">
+          <h1 className="page-title">Tuvalet Seçimi</h1>
+          <h2 className="page-subtitle">Değerlendirmek istediğiniz tuvaleti seçin</h2>
+          
+          <div className="toilet-selection-grid">
+            {toilets.map((toilet) => (
+              <button
+                key={toilet.id}
+                className="toilet-selection-button"
+                onClick={() => selectToilet(toilet.id, toilet.name)}
+              >
+                <h3>{toilet.name}</h3>
+                <p>📍 {toilet.location}</p>
+              </button>
+            ))}
+          </div>
+          
+          <button 
+            className="back-button"
+            onClick={() => navigate('/')}
+          >
+            Geri Dön
+          </button>
+        </div>
+      </div>
+    );
+  }
+
+  if (!toiletId) {
+    return (
+      <div className="rating-page">
+        <div className="rating-container">
+          <h1>Geçersiz tuvalet seçimi</h1>
+          <button onClick={() => navigate('/')} className="submit-button">
+            Geri Dön
+          </button>
+        </div>
+      </div>
+    );
+  }
+
   return (
     <div className="rating-page">
       <div className="rating-container">
-        <h1 className="page-title">Temizlik Değerlendirme - Tuvalet {toiletId}</h1>
+        <h1 className="page-title">
+          Temizlik Değerlendirme - {toiletName || `Tuvalet ${toiletId}`}
+        </h1>
         <h2 className="page-subtitle">Lütfen temizlik hizmetini değerlendirin</h2>
         
         <div className="star-rating">
